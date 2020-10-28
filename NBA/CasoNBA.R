@@ -64,7 +64,7 @@ anova(modelo2, modelo1)
 
 # Obtenemos un p_valor alto, con lo cual el modelo2 no se puede rechazar
 
-# Realizamos los diferentes contrastes y analisis realizados anteriormente
+# A continuación, realizamos los diferentes contrastes y analisis realizados anteriormente
 # para obtener mayor informacion sobre el nuevo modelo
 
 # Validacion global
