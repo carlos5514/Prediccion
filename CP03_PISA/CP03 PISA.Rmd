@@ -1,0 +1,155 @@
+---
+title: "CP03 PISA"
+author: "Carlos Serrano Valera"
+date: "05/11/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Libraries and functions, message=FALSE, warning=FALSE}
+library(here) # Agilidad en la carga de datos
+library(tidyverse)
+library(janitor) # Limpiar nombres de variables
+library(skimr) # Un summary mas comleto
+library(magrittr) # Operadores pipe
+library(corrplot) # Correlaciones
+library(ggcorrplot)  # Correlaciones
+library(splines)  # Para los modelos de splines
+library(gam)   # Modelo GAM
+
+
+```
+
+
+# Datos
+
+```{r Read Data}
+raw_data <-  read.csv("pisasci2006.csv")
+colnames(raw_data)
+```
+
+
+# Nombres de las variables
+
+Limpiamos con clean_names() para hacer más manejables los nombres de las variables
+
+```{r}
+
+raw_data %<>% clean_names()
+colnames(raw_data)
+```
+# Summary
+
+
+```{r Summarise Data, echo=FALSE}
+skim(raw_data)
+```
+
+Hay algunos NAs, que voy a eliminar
+
+``` {r cleaning NAs, echo=FALSE}
+raw_data %<>% drop_na()
+
+# Summarise
+skim(raw_data)
+```
+
+Las variables overall, issues, explain y evidence parecen tener una distribución muy similar.
+
+También parece haber una similitud entre income, health, edu y hdi. Esto tiene sentido ya la última contiene a las tres primeras.
+
+
+Para observar la relación entre la puntuación media (overall) y el resto de variables, dibujo gráficos de dispersión, que incluye un ajuste lineal entre las variables.
+
+
+```{r scatter plots, echo=FALSE, message=FALSE}
+# Seleccionamos todas las variables menos la categórica "country"
+raw_data %>% 
+  select_at(vars(-c("country"))) %>% 
+  
+  # Organizamos el dataset en dos columnas, donde cada valor de cada variable sea una fila diferente
+  tidyr::gather("id", "value", 2:10) %>%  
+  
+  # Dibujamos un grafico de dispersion para ver la relacion entre cada variable y la nota overall
+  
+  ggplot(., aes(y = overall, x = value)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  facet_wrap(~id, ncol = 3, scales = "free_x")
+```
+Las variables issues, evidence y explain tiene una relación lineal con la variable de interés "overall". La relación de esta con las demás variables no es tan evidente pero sí se puede decir que tiende igualmente hacia una relación lineal.
+
+
+# EDA
+## Correlaciones
+
+```{r correlations}
+
+pisa <- raw_data
+
+# Correlaciones
+corrplot(cor(pisa %>% 
+               select_at(vars(-country)), 
+             use = "complete.obs"), 
+         method = "circle",type = "upper")
+
+# Otra manera
+
+
+ggcorrplot(cor(pisa %>% 
+               select_at(vars(-country)), 
+            use = "complete.obs"),
+            hc.order = TRUE,
+            type = "lower",  lab = TRUE)
+```
+
+Hay una fuerte correlación positiva entre overall, issues, evidence y explain. Esta información y la extraída anteriormente conduce a pensar que las tres últimas variables, aporten poco en la predicción de la primera. Por ello, las voy a omitir para el resto del análisis.
+
+
+
+# Splines
+
+Vamos a ajustar un modelo que explique la relación de overall con las demás variables relevantes. Para ello, ajustamos splines suavizados para cada una de ellas. Con esto obtendremos, mediante cross validation, los grados de libertad deseados para cada variable a la hora de construir el modelo GAM.
+
+``` {r smoothing splines}
+# La funcion smooth.spline utiliza cv para obtener los grados de libertad optimos
+
+fitEdu <- smooth.spline(pisa$edu, pisa$overall)
+
+fitHdi <- smooth.spline(pisa$hdi, pisa$overall)
+
+fitIncome <- smooth.spline(pisa$income, pisa$overall)
+
+fitHealth <- smooth.spline(pisa$health, pisa$overall)
+
+fitSupport <- smooth.spline(pisa$support, pisa$overall)
+
+fitInterest <- smooth.spline(pisa$interest, pisa$overall)
+
+```
+
+
+# Modelo GAM
+
+Tras el CV, obtenemos los nudos (k) con los que va a ser ajustada cada variable en el modelo.
+
+He omitido en el modelo la variable Income ya que había riesgo de sobreajuste, porque los grados de libertad obtenidos eran 48.8
+
+``` {r}
+fitIncome$df
+````
+
+``` {r Gam model}
+
+gamPisa <- gam(overall ~ s(edu, 3) + s(hdi, 1) + s(health, 1) + s(support, 1) +
+             s(interest, 4), data = pisa)
+
+par(mfrow=c(2, 3))
+plot(gamPisa, se = TRUE)
+```
+
+
+

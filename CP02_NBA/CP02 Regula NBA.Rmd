@@ -1,0 +1,325 @@
+---
+title: "CP02 NBA"
+author: "Carlos Serrano Valera"
+date: "09/11/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r Libraries and functions, message=FALSE, warning=FALSE}
+library(here) # Agilidad en la carga de datos
+library(tidyverse)
+library(janitor) # limpiar los nombres de variables
+library(skimr) # Summary mas completo
+library(magrittr) # Operadores pipe
+library(corrplot) # Correlaciones
+library(ggcorrplot)  # Correlaciones
+library(PerformanceAnalytics) # Correlaciones
+library(glmnet)   # Para implementar la regularizacion
+library(dplyr)
+
+
+```
+
+# Datos
+
+```{r Read Data, warning=FALSE}
+raw_data <-  read.csv("nba.csv")
+colnames(raw_data)
+```
+
+
+
+# Nombres de variables
+
+```{r}
+raw_data %<>% clean_names()
+colnames(raw_data)
+```
+
+
+
+
+# Summarize Data
+
+```{r Summarise Data}
+skim(raw_data)
+
+```
+
+
+
+
+
+* **Hay dos datos repetidos y varios NA**
+
+
+# Limpieza de datos
+
+
+```{r Data Wranling}
+# Quitamos los duplicados
+raw_data %<>% distinct(player,.keep_all = TRUE)
+
+# Eliminamos NAs
+raw_data %<>% drop_na()
+
+# Summary de nuevo
+skim(raw_data)
+
+```
+
+
+
+
+
+# Gráficos de dispersión
+
+```{r fig.height = 20, fig.width = 4, fig.align = "center"}
+
+raw_data %>% 
+  # Seleccionamos todo menos las variables categoricas
+  select_at(vars(-c("player","nba_country","tm"))) %>% 
+  
+  # Poner todos los valores en una columna
+  tidyr::gather("id", "value", 2:25) %>%  
+  
+  # Dibujar grafico de dispersion junto con regresion linear y dividir por variable en facets
+  ggplot(., aes(y = salary, x = value)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  facet_wrap(~id,ncol = 2, scales = "free_x")
+```
+
+
+
+### Ahora con el logaritmo del salario
+
+
+```{r fig.height = 20, fig.width = 4, fig.align = "center"}
+
+raw_data %>% 
+  select_at(vars(-c("player","nba_country","tm"))) %>% 
+  tidyr::gather("id", "value", 2:25) %>% 
+  ggplot(., aes(y = log(salary), x = value)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  facet_wrap(~id,ncol = 2,scales = "free_x")
+```
+
+
+
+
+# EDA
+## Utilizamos log(salary)
+
+```{r Log salary, fig.height = 10, fig.width = 10, fig.align = "center"}
+
+# Excluimos las variables categoricas del nuevo df
+log_data <- raw_data %>% mutate(salary = log(salary))
+
+skim(log_data)
+
+vars <- c("player","nba_country","tm")
+
+# Correlaciones
+corrplot(cor(log_data %>% 
+               select_at(vars(-vars)), 
+             use = "complete.obs"), 
+         method = "circle",type = "upper")
+
+# Otra manera
+
+
+ggcorrplot(cor(log_data %>% 
+               select_at(vars(-vars)), 
+            use = "complete.obs"),
+            hc.order = TRUE,
+            type = "lower",  lab = TRUE)
+
+
+```
+
+
+
+### Una visión global
+
+```{r fig.height = 20, fig.width =20, fig.align = "center"}
+
+chart.Correlation(log_data %>% 
+               select_at(vars(-vars)),
+               histogram=TRUE, pch=19)
+
+
+```
+
+
+
+
+
+# Regularización
+## Elastic net
+
+Primero dividimos la muestra en train data y test data
+Más o menos el 75 % de la muestra es train
+
+
+``` {r data splitting}
+
+nba <- log_data %>% select_at(vars(-vars)) 
+
+
+set.seed(1234)  
+num_data <- nrow(nba)
+num_data_test <- 120  # la cantidad de observaciones para test
+train=sample(num_data ,num_data-num_data_test)
+
+
+nba_train <- nba[train,]
+nba_test  <-  nba[-train,]
+```
+
+``` {r feature model matrices}
+
+nba_train_x <- model.matrix(salary ~ ., nba_train)[, -1]
+nba_train_y <- log(nba_train$salary)
+
+nba_test_x <- model.matrix(salary ~ ., nba_test)[, -1]
+nba_test_y <- log(nba_test$salary)
+
+dim(nba_train_x)
+dim(nba_test_x)
+````
+
+
+
+``` {r elastic net}
+# maintain the same folds across all models
+fold_id <- sample(1:10, size = length(nba_train_y), replace=TRUE)
+
+# busqueda a traves de un rango de alphas de 0 a 1
+tuning_grid <- tibble::tibble(
+  alpha      = seq(0, 1, by = .1),
+  mse_min    = NA,
+  mse_1se    = NA,
+  lambda_min = NA,
+  lambda_1se = NA
+)
+tuning_grid
+
+```
+
+
+
+``` {r}
+for(i in seq_along(tuning_grid$alpha)) {
+  
+  # Modelo CV para cada valor de alpha
+  fit <- cv.glmnet(nba_train_x, nba_train_y, alpha = tuning_grid$alpha[i], foldid = fold_id)
+  
+  # extraemos mse y lambdas
+  tuning_grid$mse_min[i]    <- fit$cvm[fit$lambda == fit$lambda.min]
+  tuning_grid$mse_1se[i]    <- fit$cvm[fit$lambda == fit$lambda.1se]
+  tuning_grid$lambda_min[i] <- fit$lambda.min
+  tuning_grid$lambda_1se[i] <- fit$lambda.1se
+}
+
+tuning_grid
+```
+
+
+
+``` {r}
+# Dibujamos los aplhas con mse minimos
+tuning_grid %>%
+  mutate(se = mse_1se - mse_min) %>%
+  ggplot(aes(alpha, mse_min)) +
+  geom_line(size = 2) +
+  geom_ribbon(aes(ymax = mse_min + se, ymin = mse_min - se), alpha = .25) +
+  ggtitle("MSE ± one standard error")
+```
+
+
+
+``` {r prediccion}
+# Minimo error obtenido para un alpha de 0.5
+cv_net  <- cv.glmnet(nba_train_x, nba_train_y, alpha = 0.5)
+min(cv_net$cvm)
+```
+
+
+
+```{r}
+# Comparamos con el error de la prediccion sobre la muestra de test
+pred <- predict(cv_net, s = cv_net$lambda.min, nba_test_x)
+mean((nba_test_y - pred)^2)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
