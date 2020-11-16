@@ -1,0 +1,167 @@
+---
+title: "CP04 - Ventas Apple"
+author: "Carlos Serrano Valera"
+date: "16/11/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+``` {r librerias, include = FALSE}
+require(forecast)
+require(xts)
+require(ggplot2)
+library(ggfortify) # graficar mensualmente
+library(dplyr)
+```
+
+``` {r carga datos, include = FALSE}
+# Leemos los datos
+rawData <- read.csv("IngresosApple.csv", sep = ";")
+```
+
+### Introducci?n
+
+El objetivo de esta pr?ctica es estimar los modelos ETS y ARIMA para las ventas de Apple, escogiendo el que mejor prediga el comportamiento de las ventas del gigante tecnol?gico. La base de datos disponible es una serie temporal que recoge informaci?n sobre los ingresos de Apple desde el segundo trimestre de 2018 hasta el tercer trimestre de 2017.
+
+``` {r creamos XTS, include = FALSE}
+# Primero creamos un objeto de fechas del segundo trimestre de 2008 hasta el tercero de 2017 
+fechas <- seq(as.Date("2008-04-01"), as.Date("2017-09-30"), by = "quarter")
+
+# Annadimos este objeto como nueva columna del dataset
+rawData <- rawData %>% mutate(fecha = fechas)
+
+# Convertimos los datos xts
+xVentas = xts(rawData$Ingresos, order.by = as.Date(rawData$fecha,"%m/%d/%Y"),frequency = 4) 
+
+```
+``` {r pasar a zoo, include = FALSE}
+# Para pasar a formato zoom, primero necesitamos pasar a quarterly los datos
+xVentas = to.quarterly(xVentas)
+
+# Ahora si, transformamos los datos a formato zoo
+zVentas = as.zoo(xVentas$xVentas.Close)
+```
+``` {r cambiar nombre de Primas, include = FALSE}
+# Cambiamos el nombre a "Primas"
+names(zVentas) = "Primas"
+```
+
+Primero observamos la evoluci?n de las ventas durante el periodo estimado. Podemos ver que existe una tendencia positiva, con lo cual la media no es constante, y tampoco lo es la varianza, por lo que los datos no son estacionarios.
+
+Se puede apreciar tambi?n cierta estacionalidad en los datos.
+``` {r grafico preliminar zVentas}
+# Graficamos la serie
+
+autoplot(zVentas) + ggtitle("Primas Trimestrales Apple") + xlab("Trimestres") + ylab("Primas")
+``` 
+### Modelo ETS
+
+Primero vamos a ajustar el modelo ETS. Para ello, se han omitido los tres trimestres de 2017, para poder hacer luego una comparaci?n del modelo de predicci?n para ese a?o, con los datos reales.
+
+De manera muy sencilla en R, obtenemos el modelo predcitivo ETS para las ventas de Apple, que tiene el siguiente resumen. Con ?l podemos ver las predicciones, junto con unos intervalos de confianza a dos niveles de significaci?n diferentes, para los a?os 2017 y 2018
+``` {r submuestra zVentas, include = FALSE}
+# Seleccionamos un numero de observaciones para quitar de la muestra
+
+cOmit = 3
+
+# Tamanno de la muestra
+
+nObs = length(zVentas)
+
+# Generamos la submuestra quitando los tres trimestres de 2017
+
+oVentas <- window(zVentas,start = index(zVentas[1]),
+                  end = index(zVentas[nObs-cOmit]))
+
+```
+``` {r seleccionar modelos ets}
+# Seleccionar modelo ETS automaticamente
+
+etsfit <- ets(oVentas)
+
+# Modelo forecast
+
+fventas.ets = forecast(etsfit)
+
+# Resultados
+
+summary(fventas.ets)
+```
+Podemos ver estos resultados en una gr?fica, donde comparamos con los datos reales. Vemos que la predicci?n para los tres primeros trimestres de 2017 se acerca bastante al dato real, incluso, acierta completamente en el segundo trimestre.
+``` {r grafico modelo forecast}
+# Dibujamos
+plot(fventas.ets)
+lines(window(zVentas),type="o")
+```
+Aqu? podemos ver num?ricamente la comparaci?n entre los datos reales y la predicci?n, para los datos de 2017
+
+``` {r real contra prediccion ETS}
+
+#Contrastamos los datos reales con los datos predichos
+
+rows <- list("Q1 2017", "Q2 2017", "Q3 2017")
+columns <- list("Prediccion", "Real")
+ma <- list(rows, columns)
+
+matrix(c(fventas.ets$mean[1:cOmit],zVentas[(nObs-cOmit+1):nObs]), ncol=2, dimnames = ma)
+
+```
+
+
+### Modelo ARIMA
+
+A continuaci?n, vamos a estimar el modelo ARIMA para las ventas de Apple. Utilizando la divisi?n de muestra anteriormente realizada, obtenemos los siguientes resultados.
+
+``` {r Modelo ARIMA}
+# Utilizamos la separacion de la muestra realizada para el modelo ETS
+
+fitARIMA = auto.arima(oVentas,lambda = 0)
+summary(fitARIMA)
+```
+Visualmente, obtenemos un a predicci?n bastante cercana a la realidad, sobre todo en el primer trimestres de 2017
+  
+``` {r modelo forecast arima}
+# Modelo forecast ARIMA
+fventas.ARIMA = forecast(fitARIMA)
+
+
+# Dibujamos los datos reales junto a la prediccion
+
+df_new <- data.frame(value = as.vector(zVentas),
+                     time = time(zVentas))
+
+ggplot(df_new) + geom_point(aes(x = time,y = value)) + geom_line(aes(x = time,y = value)) +  geom_forecast(fventas.ARIMA, alpha = 0.4) + ggtitle("ARIMA: Prediccion Apple")
+```
+
+Lo comprobamos num?ricamente:
+
+``` {r real contra prediccion ARIMA}
+# Contrastamos los datos reales con los datos predichos
+
+matrix(c(fventas.ARIMA$mean[1:cOmit],zVentas[(nObs-cOmit+1):nObs]),ncol=2, dimnames = ma)
+
+```
+
+### Comprobaci?n ambos modelos
+
+El ?ltimo paso de este an?lisis es comprobar la precisi?n de los dos modelos estimados, para decidir cu?l de ellos predice mejor.
+
+
+``` {r comparacion modelos ETS y ARIMA}
+# Comprobamos la precision de ambos modelos
+ETSaccu <- forecast:::testaccuracy(fventas.ets$mean,window(zVentas,start=2017),test = NULL, d = NULL, D = NULL)
+
+ARIMAaccu <- forecast:::testaccuracy(fventas.ARIMA$mean,window(zVentas,start=2017),test = NULL, d = NULL, D = NULL)
+
+# Lo vemos conjuntamente
+cbind(data.frame(ETSaccu), data.frame(ARIMAaccu))
+
+
+```
+
+El modelo ETS presenta valores m?s peque?os de RMSE y MAPE, por lo que elegiremos este como mejor predictor.
+
+
