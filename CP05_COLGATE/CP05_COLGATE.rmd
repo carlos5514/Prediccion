@@ -1,0 +1,275 @@
+---
+title: "CP05 - Colgate vs Crest"
+author: "Carlos Serrano Valera"
+date: "23/11/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+``` {r librerias, include=FALSE}
+library(openxlsx)
+library(skimr)
+library(fpp2)
+library(ggplot2)
+library(zoo)
+library(ggfortify)
+library(tseries)
+require(forecast)
+require(xts)
+library(readr)
+library(tidyverse)
+library(dplyr)
+library(TSA)
+library(Hmisc)
+library(astsa)
+library(tsoutliers)
+library(normtest)
+```
+
+```{r carga de datos, include=FALSE}
+library(readxl)
+data <- read_excel('data.xlsx')
+View(data)
+```
+
+```{r formato fecha, include=FALSE}
+data$Date <- as.Date(paste(data$Year, data$Week, 1, sep = "-"), "%Y-%U-%u")
+data <- dplyr::select(data, -Year, -Week)
+```
+
+
+```{r separamos Colgate y crest, echo=FALSE}
+colgate <- ts(data$Colgate, start = 1958,frequency = 52)
+crest <- ts(data$Crest, start = 1958, frequency = 52)
+
+```
+
+```{r zoo , echo=FALSE}
+# Pasamos a formato zoo
+
+zcolgate <- as.zoo(colgate)
+zcrest <- as.zoo(crest)
+```
+
+
+El objetivo de este informe es analizar las cuotas de mercado de las marcas estadounidenses Colgate y Crest en un periodo de tiempo concreto, que va desde finales de los años 50, hasta principios de los 60. 
+
+
+En concreto, se pretende ajustar el efecto producido por el anuncio de la ADA en Agosto de 1960, pues supuso un "shock" en las cuotas de ambas empresas. Debido a ese estímulo, el peso de Colgate en el sector bajó significativamente, mientras que el de Crest subió.
+
+
+En el informe se tratará de estimar un modelo capaz de predecir el comportamiento de las cuotas de ambas marcas para las fechas de 1963, teniendo en cuenta, la singularidad que se produjo a mediados del periodo estudiado.
+
+
+A continuación, se muestran unas gráficas de la evolución de la cuota de las empresas durante las fechas de las que se dispone información (Enero de 1958 hasta Abril de 1963)
+
+
+
+```{r graficos preliminares , echo=FALSE}
+# Graficamos ambas series
+
+autoplot(zcolgate) + ggtitle("Cuota") + xlab("Week") + ylab("Colgate")
+autoplot(zcrest) + ggtitle("Cuota") + xlab("Week") + ylab("Crest")
+```
+
+
+
+Hay un escalón significativo en el 1 de Agosto de 1960, que se corresponde con el anuncio de la ADA, sobre la "ayuda" que suponía el dentífrico de Crest para la higiene bucal. El escalón se aprecia en ambas gráficas: Colgate pasa de tener una cuota de entre el 30 y 50 % a estar entre un 20 y un 30. Por otro lado, Crest, oscilaba alrededor del 15% de cuota de mercado, mientras que, después del anuncio de la ADA, su cuota se sitúa en torno al 40%
+
+Cabe señalar además, que , a simple vista, parece que son series no estacionarias y que no hay estacionalidad. Podemos comprobar este hecho mediante el test Dickey-Fuller:
+
+
+```{r test Dickey-Fuller, echo=FALSE, warning=FALSE}
+adf.test(zcolgate)
+adf.test(zcrest)
+```
+
+
+Mediante los tests, confirmamos el supuesto inicial sobre la no estacionariedad de las series estudiadas.
+
+
+
+```{r division de la muestra, echo=FALSE}
+# Omitimos las observaciones de 1963
+
+cOmit = 16                     
+
+nObsColgate = length(zcolgate)
+nObsCrest = length(zcrest)
+
+# Submuestra de Colgate
+oColgate <- window(zcolgate, start = index(zcolgate[1]),end = index(zcolgate[nObsColgate - cOmit]))
+
+# Muestra Colgate que dejamos fuera contrastar con la prediccion
+pColgate <- window(zcolgate, start = index(zcolgate[nObsColgate - cOmit + 1]), end = index(zcolgate[nObsColgate]))
+
+# Submuestra de Crest
+oCrest <- window(zcrest, start = index(zcrest[1]),end = index(zcrest[nObsCrest - cOmit]))
+
+# Muestra Crest que dejamos fuera contrastar con la prediccion
+pCrest <- window(zcrest, start = index(zcrest[nObsCrest - cOmit + 1]), end = index(zcrest[nObsCrest]))
+
+```
+
+
+
+### Modelo ARIMA
+
+
+Obtenemos diferentes modelos para el caso de Colgate:
+
+``` {r ARIMA modelo Colgate}
+arimaCol = auto.arima(oColgate, lambda = 0)
+summary(arimaCol)
+```
+``` {r ARIMA Tasa de variacion Colgate}
+
+arimaCol2 = auto.arima(oColgate, lambda = 0, d = 1, D = 1)
+summary(arimaCol2)
+```
+
+
+
+Y, a continuación, para el caso de Crest:
+
+
+``` {r ARIMA modelo Crest}
+arimaCre = auto.arima(oCrest, lambda = 0)
+summary(arimaCre)
+```
+
+
+
+``` {r ARIMA Tasa de variacion Crest}
+arimaCre2 = auto.arima(oCrest, lambda = 3, d = 1, D = 0)
+summary(arimaCre2)
+```
+
+
+#### Análisis de residuos
+
+``` {r residuos arimaCol}
+ggtsdisplay(arimaCol$residuals)
+```
+
+``` {r residuos arimaCol2}
+ggtsdisplay(arimaCol2$residuals)
+```
+
+
+``` {r residuos arimaCre}
+ggtsdisplay(arimaCre$residuals)
+```
+
+
+``` {r residuos arimaCre2}
+ggtsdisplay(arimaCre2$residuals)
+```
+
+
+
+#### Predicción ARIMA
+
+Obtenemos las predicciones de las cuotas de la primera parte del año de 1963 para las dos empresas.
+
+``` {r prediccion ARIMA colgate, warning=FALSE}
+# Prediccion
+fcolgate.arima = forecast(arimaCol2, h=16)
+
+# Grafica
+df_new <- data.frame(value = as.vector(zcolgate),
+                     time = time(zcolgate))
+
+ggplot(df_new) + geom_point(aes(x = time, y = value)) + geom_line(aes(x = time, y = value)) + geom_forecast(fcolgate.arima, alpha = 0.4) + ggtitle("ARIMA: Predicción Colgate")
+
+```
+
+
+
+La prediccion no parece ir acorde con el comportamiento real de las cuotas de Colgate en el año 1963
+
+
+
+``` {r prediccion ARIMA crest, warning=FALSE}
+# Prediccion
+fcrest.arima = forecast(arimaCre, h=16)
+
+# Grafica
+df_new <- data.frame(value = as.vector(zcrest),
+                     time = time(zcrest))
+
+ggplot(df_new) + geom_point(aes(x = time, y = value)) + geom_line(aes(x = time, y = value)) + geom_forecast(fcrest.arima, alpha = 0.4) + ggtitle("ARIMA: Predicción Crest")
+
+```
+
+
+
+En el caso de Crest, la predicción representada por la línea azul, sigue una evolución bastante plana, muy diferente al comportamiento real de la cuota de Crest.
+
+
+#### Outliers
+
+Obtenemos los outliers innovativos y aditivos encontrados.
+
+
+```{r outliers ARIMA, echo=FALSE}
+detectAO(arimaCol2) 
+detectAO(arimaCre) 
+detectIO(arimaCol2) 
+detectIO(arimaCre)
+```
+
+
+
+
+### Análisis de Intervención
+
+Procedemos a la realización de un análisis de intervención mediante el modelo ARIMAX, para las dos series temporales.
+
+Este sería el resultado para Colgate:
+
+```{r , echo=FALSE}
+arimax_colgate <- arimax(as.double(zcolgate), 
+                         order = c(0,1,1),
+                         xtransf = data.frame(A60_step = 1*(seq(zcolgate) > 102),
+                                              A60_pulse = 1*(seq(zcolgate) == 102)),
+                         transfer = list(c(0,0), c(1,0)),
+                         method = "ML")
+arimax_colgate
+```
+
+
+El caso de Crest:
+
+
+```{r , echo=FALSE}
+arimax_crest <- arimax(as.double(zcrest), 
+                       order = c(0,1,1),
+                       xtransf = data.frame(A60_step = 1*(seq(zcrest) ),
+                                            A60_pulse = 1*(seq(zcrest) )),
+                       xreg = data.frame(A60_2 = 1*(seq(zcrest) == c(135,136))),
+                       transfer = list(
+                         c(0,0),
+                         c(1,0)
+                       ),
+                       method = 'ML')
+arimax_crest
+```
+
+
+#### Outliers
+
+Obtenemos los outliers innovativos y aditivos encontrados.
+
+```{r outliers Intervencion , echo=FALSE}
+detectAO(arimax_colgate) 
+detectIO(arimax_colgate) 
+detectAO(arimax_crest)
+detectIO(arimax_crest)
+```
+
+
+
