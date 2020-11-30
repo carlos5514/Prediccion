@@ -1,0 +1,299 @@
+---
+title: "CP06 - BMW vs Volkswagen"
+author: "Carlos Serrano Valera"
+date: "25/11/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+``` {r LIBRERIAS, include=FALSE}
+library("quantmod") # Package to download financials historical data 
+library(forecast)
+library("fGarch")
+library(vars)
+```
+
+``` {r FUNCION TEST LAGRANGE, include=FALSE}
+# Creamos una funcion que calcule el test de Lagrange
+
+archTest <- function(rtn, m = 10){
+  # Perform Lagrange Multiplier Test for ARCH effect of a time series
+  # rtn: time series
+  # m: selected AR order
+  # TSAY(2013)
+  y = (rtn - mean(rtn))^2
+  T = length(rtn)
+  atsq = y[(m+1):T]
+  x = matrix(0,(T-m),m)
+  for (i in 1:m){
+    x[,i]=y[(m+1-i):(T-i)]
+  }
+  md=lm(atsq~x)
+  summary(md)
+}
+
+```
+
+``` {r RECUPERAMOS DATOS DE YAHOO, include=FALSE}
+# Get BMW and VOLKSWAGEN data from yahoo
+
+BData <- getSymbols("BMW.DE", from = "2014-01-01", to = "2020-10-30", auto.assign = FALSE)
+VData <- getSymbols("VOW.DE", from = "2014-01-01", to = "2020-10-30", auto.assign = FALSE)
+
+# Define workdata for both companies
+BMWData = Ad(BData)
+VOWData = Ad(VData)
+
+
+```
+
+
+``` {r DAILY RETURNS, include=FALSE}
+# Calculate Daily Arithmetic Return
+dRentBMW = dailyReturn(BMWData, type = 'log',leading = FALSE)
+dRentVOW = dailyReturn(VOWData, type = 'log',leading = FALSE)
+
+# Exclude NA (First row)
+dRentBMW = na.exclude(dRentBMW)
+dRentVOW = na.exclude(dRentVOW)
+```
+
+Esta práctica va a tratar de analizar la relación existente entre dos gigantes del mercado automovilístico como son BMW y Volkswagen. Para ello, se van a obtener, con la ayuda de la librería "Quantmod" de R, datos sobre los precios de ambas empresas, recogidos del portal de Yahoo Finance. El periodo considerado es el de Enero de 2014 hasta Noviembre de 2020. El objetivo principal será el planteamiento de un modelo GARCH y un modelo VAR entre los dos activos.
+
+
+En primer lugar, obtenemos los rendimientos de ambos activos y los presentamos en un gráfica conjunta con la evolución del precio durante el periodo estimado.
+
+
+``` {r PLOTTING RETURNS}
+# Plotting returns and stock value of each company
+
+plot.zoo(cbind(BMWData, dRentBMW), 
+         main = " BMW Profitability",
+         xlab = "Years",
+         ylab = c("Price","Profitability"))
+
+plot.zoo(cbind(VOWData, dRentVOW), 
+         main = " VOLKSWAGEN Profitability",
+         xlab = "Years",
+         ylab = c("Price","Profitability"))
+
+```
+
+
+En los gráficos represnetados podemos ver claramente el efecto del "Dieselgate", en Septiembre de 2015. Este fue un impacto muy negativo para Volkswagen. Y, por supuesto, es notable el "shock" originado por el Covid en Marzo de este año en los precios y las rentabilidades de las dos empresas.
+
+
+
+### Modelo GARCH
+
+A continuación, vamos a plantear un modelo GARCH. Estos modelos se emplean en series temporales y tratan de analizar la varianza de las mismas, dado que esta, junto con la desviación típica (la volatilidad de las acciones), no son constantes. Por ello, a través de modelos como el GARCH, podemos predecir los valores futuros de la volatilidad de los rendimientos de activos.
+
+
+Como primer paso, vamos a representar los rendimientos al cuadrado.
+
+
+``` {r PLOT PROXY VOLATILITY}
+# Plotting a proxy of volatility of both firms, along with the stock prices and the returns
+
+plot.zoo(cbind(BMWData, dRentBMW, dRentBMW^2), main = "BMW Profitability", xlab = "Years", ylab = c("Price","Profitability","Volatility"))
+
+plot.zoo(cbind(VOWData, dRentVOW, dRentVOW^2), main = "VOW Profitability", xlab = "Years", ylab = c("Price","Profitability","Volatility"))
+```
+
+
+
+El siguiente paso es analizar el ACF y PACF de los retornos al cuadrado.
+
+
+``` {r ACF and PACF PROXY RETURNS}
+# Save the squared returns in new objects
+
+VolProxyBMW = dRentBMW^2 
+VolProxyVOW = dRentVOW^2
+
+# ACF y PACF - Plot the volatilities
+
+tsdisplay(VolProxyBMW) 
+tsdisplay(VolProxyVOW)
+```
+
+
+Visualmente podemos ver que la volatilidad de los rendimientos de los activos no es constante, como era de esperar. Adicionalmente, vamos a comprobar este hecho con los test de Ljung-Box.
+
+
+``` {r LJUNG-BOX TESTS}
+Box.test(VolProxyBMW,lag=10,  type="Lj")
+Box.test(VolProxyBMW,lag=20,  type="Lj")
+Box.test(VolProxyBMW,lag=40,  type="Lj")
+
+Box.test(VolProxyVOW,lag=10,  type="Lj")
+Box.test(VolProxyVOW,lag=20,  type="Lj")
+Box.test(VolProxyVOW,lag=40,  type="Lj")
+
+```
+
+
+A continuación, llevamos a cabo el test de Lagrange, donde la hipótesis nula, indica que no habría GARCH
+
+
+``` {r LAGRANGE TEST}
+# LM test
+archTest(dRentBMW,10)
+archTest(dRentVOW,10)
+```
+
+
+
+Procedemos ahora con el ajuste de los modelos. Construimos primero un ARCH(1)
+
+``` {r ARCH(1)}
+BMWarch = garchFit(~1 + garch(1,0),data = dRentBMW, trace = F) 
+summary(BMWarch)
+
+resi = residuals(BMWarch, standardize = T) # residuals
+resi = xts(resi,order.by = index(dRentBMW)) # residuals as xts
+tsdisplay(resi^2) # acf pacf residuals
+
+
+VOWarch = garchFit(~1 + garch(1,0),data = dRentVOW, trace = F) 
+summary(VOWarch)
+
+resi = residuals(VOWarch, standardize = T) # residuals
+resi = xts(resi,order.by = index(dRentVOW)) # residuals as xts
+tsdisplay(resi^2) # acf pacf residuals
+```
+
+
+
+El siguiente modelo es el GARCH(1,1)
+
+
+``` {r GARCH(1,1) BMW, warning=FALSE}
+BMWgarch <- fGarch::garchFit(~1 + garch(1,1), data = dRentBMW, trace = F) 
+summary(BMWgarch)
+
+resi=residuals(BMWgarch,standardize=T) # residuals
+resi=xts(resi,order.by=index(dRentBMW)) # residuals as xts
+tsdisplay(resi^2) # acf pacf residuals
+#plot(BMWgarch)
+```
+
+``` {r GARCH(1,1) VOLKS, warning=FALSE}
+VOWgarch = garchFit(~1 + garch(1,1), data = dRentVOW,trace = F) 
+summary(VOWgarch)
+
+resi=residuals(VOWgarch,standardize=T) # residuals
+resi=xts(resi,order.by=index(dRentVOW)) # residuals as xts
+tsdisplay(resi^2) # acf pacf residuals
+#plot(VOWgarch)
+
+```
+
+
+Ahora vamos a ajustar el modelo GARCH, pero utilizando la distribución de t student.
+
+
+``` {r T STUDENT BMW, warning=FALSE}
+BMWstd = garchFit(~1 + garch(1,1), data = dRentBMW, trace = F, cond.dist = "std")
+summary(BMWstd)
+#plot(BMWstd)
+```
+
+
+``` {r T STUDENT VOLKS,warning=FALSE}
+VOWstd = garchFit(~1 + garch(1,1), data = dRentVOW, trace = F, cond.dist = "std")
+summary(VOWstd)
+#plot(VOWstd)
+```
+
+
+Como último paso, hacemos las predicciones.
+
+
+``` {r PREDICTIONS BMW T STUDENT}
+predict(BMWstd) #forecast volatility
+predict(BMWstd, n.ahead = 10, plot=TRUE, crit_val=2) # plot with 2*standard error
+predict(BMWstd,n.ahead=20,plot=TRUE,conf=.9,nx=100) # plot 100 data with 90% confidence
+```
+
+
+``` {r PREDICTIONS VOW T STUDENT}
+predict(VOWstd) #forecast volatility
+predict(VOWstd, n.ahead = 10, plot=TRUE, crit_val=2) # plot with 2*standard error
+predict(VOWstd,n.ahead=20,plot=TRUE,conf=.9,nx=100) # plot 100 data with 90% confidence
+```
+
+
+
+``` {r PREDICTIONS BMW GARCH}
+predict(BMWgarch) #forecast volatility
+predict(BMWgarch, n.ahead = 10, plot=TRUE, crit_val=2) # plot with 2*standard error
+predict(BMWgarch,n.ahead=20,plot=TRUE,conf=.9,nx=100) # plot 100 data with 90% confidence
+```
+
+
+
+``` {r PREDICTIONS VOW GARCH}
+predict(VOWgarch) #forecast volatility
+predict(VOWgarch, n.ahead = 10, plot=TRUE, crit_val=2) # plot with 2*standard error
+predict(VOWgarch,n.ahead=20,plot=TRUE,conf=.9,nx=100) # plot 100 data with 90% confidence
+```
+
+
+
+
+
+### Modelo VAR
+
+En un modelo VAR todas las variables se influyen entre sí, es decir que todas las variables ahora son tratadas como endógenas. Se van a considerar tantas ecuaciones como variables se quieran incluir. En nuestro caso, tenemos las rentabilidades de BMW y Volkswagen. Como las series son no estacionarias, tomaremos diferencias para hacerlas estacionarias y luego ajustaremos el modelo VAR.
+
+
+``` {r DIFF VARIABLES}
+# Obtain differences to convert to stationary
+BMW.ret <- diff(log(BMWData))
+VOW.ret <- diff(log(VOWData))
+
+# Create a vector for the two variables
+BK = cbind(BMW.ret, VOW.ret)
+
+# Drop NAs from vector
+BK <- na.exclude(BK)
+
+``` 
+
+
+Primero, seleccionamos por AIC los retardos que tendrá el modelo
+
+
+``` {r VAR SELECT}
+VARselect(BK)
+```
+
+
+Obtenemos ahora sí el modelo, con un periodo de retardo
+
+
+``` {r VAR MODEL}
+var1 = VAR(BK)
+summary(var1)
+
+```
+
+
+Predecimos con el modelo estimado y obtenemos la respuesta a los impulsos de ambas variables.
+
+
+
+``` {r VAR PREDICTION}
+var.pred <- predict(var1, n.ahead = 10, ci = 0.95)
+
+Phi(var1) # coefficient matrices of VMA representation
+
+var.irf <- irf(var1) # Impulse response
+
+plot(var.irf)
+
+```
