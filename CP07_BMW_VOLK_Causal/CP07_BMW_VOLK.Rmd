@@ -1,0 +1,137 @@
+---
+title: "CP07 - BMW vs VOLKSWAGEN"
+author: "Carlos Serrano Valera"
+date: "13/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introducción
+
+El objetivo de este trabajo es realizar un modelo Causal Impact entre las series temporales del precio de la acción de las empresas BMW y Volkswagen. El proósito principal es estudiar el efecto del DieselGate 
+
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+library(tidyverse)
+library(broom)
+library(flextable)
+library(mgcv)
+library(reshape2)
+library(readr)
+library(ggplot2)
+library(skimr)
+require(forecast)
+require(xts)
+library(ggfortify)
+library(rmdformats)
+library(TSA)
+library(zoo)
+library(Hmisc)
+library(astsa)
+library(quantmod)
+library(forecast)
+library(fGarch)
+library(vars)
+library(devtools)
+library(imputeTS)
+library(urca)
+library(CausalImpact)
+```
+
+## Causal Impact
+
+Estudiamos preliminarmente las series por separado. Hemos cogido muestras de Yahoo Finance para las dos empresas des el año 2014 hasta la actualidad.
+
+
+```{r include=FALSE}
+
+bmwData <- getSymbols("BMW.DE", from="2014-01-01", to="2020-12-12", auto.assign=FALSE) 
+bmwdata <- bmwData[,6]
+volData <- getSymbols("VOW.DE", from="2014-01-01", to="2020-12-12", auto.assign=FALSE) 
+voldata <- volData[,6]
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+plot(bmwdata$BMW.DE.Adjusted, main = "Cotización BMW")
+plot(voldata$VOW.DE.Adjusted, main = "Cotización Volkswagen")
+```
+
+En septiembre de 2015, se descubrió el DieselGate, cuando se supo que Volkswagen había estado manipulando la emisión de Diesel de sus modelos para hacer parecer que eran menos contaminantes.
+
+El modelo Causal Impact requiere un punto de corte. Se va a elgir el 1 de Septiembre de 2015 como tal.
+
+```{r include=FALSE}
+vol_bmw <- cbind(voldata, bmwdata)
+bmw_vol <- cbind(bmwdata, voldata)
+vol_bmw <- na.omit(vol_bmw)
+bmw_vol <- na.omit(bmw_vol)
+```
+
+```{r include=FALSE}
+pre_period <- as.Date(c("2014-01-01", "2015-08-31"))
+post_period <- as.Date(c("2015-09-01", "2020-12-12"))
+```
+
+```{r warning=FALSE, message=FALSE}
+causal_vol <- CausalImpact(vol_bmw,
+                             pre.period = pre_period, 
+                             post.period = post_period)
+causal_bmw <- CausalImpact(bmw_vol, 
+                             pre.period = pre_period, 
+                             post.period = post_period)
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+summary(causal_vol)
+```
+
+Podemos visualizar la estimación del modelo mediante un plot, en este caso para Volkswagen:
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+plot(causal_vol)
+plot(causal_vol, "original")
+```
+
+
+En color negro, se ve la cotización de Volkswagen y el notado efecto negativo del DieselGate, ya que cayó significativamente en ventas, Por otro lado, encontramos la línea azul, que representa la evolución de la cotización del gigante automovilístico en caso de que no hubiese existido tal escándalo. Como se puede apreciar, la diferencia en ventas es importante.
+
+Aprovechando las herramientas de R, podemos obtener un informe generado de manera automática:
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+summary(causal_vol, "report")
+```
+
+Cabe señalar que, según el reporte extraído, el efecto provocado por el DieselGate no es estadísticamente significativo.
+
+
+Ahora comprobamos qué sucedión con BMW
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+summary(causal_bmw)
+```
+
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+plot(causal_bmw)
+plot(causal_bmw, "original")
+```
+
+Se aprecia un efecto inverso originado por el escándalo de emisiones. Fue un impacto positivo para BMW.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+summary(causal_bmw, "report")
+```
+
+De nuevo, el efecto no es estadísticamente significativo.
+
+
+## Conclusiones
+
+Se puede concluir que, el efecto del DieselGate fue diferente para BMW y Volkswagen. Para la primera fue negativo. Tuvo un impacto duro en sus ventas, puesto que la imagen de la marca se vio perjudicada y esto generó la caída de las cotizaciones. Cabe señalar, que después de un tiempo, la marca volvió a recuperar su posición en el mercado en cuanto a ventas.
+
+Por otro lado, BMW se benefició de la caída de su competencia, y obtuvo un incremento en las cotizaciones.
+
+En cualquier caso, se ha comprobado que ninguno de estos efectos fue estadísticamente significativo, aunque se intuye de las gráficas que el comportamiento de ambas empresas en el mercado habría sido ciertamente diferente de no ser por el DieselGate.
